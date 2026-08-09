@@ -1,0 +1,95 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+
+# ===========================
+# Python
+# ===========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual Environment
+.venv/
+venv/
+
+# Environment Variables
+.env
+.env.*
+
+# ===========================
+# VS Code
+# ===========================
+.vscode/
+
+# ===========================
+# JetBrains
+# ===========================
+.idea/
+
+# ===========================
+# macOS
+# ===========================
+.DS_Store
+
+# ===========================
+# Windows
+# ===========================
+Thumbs.db
+Desktop.ini
+
+# ===========================
+# Python Testing
+# ===========================
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ===========================
+# Type Checking
+# ===========================
+.mypy_cache/
+.pyright/
+
+# ===========================
+# Ruff
+# ===========================
+.ruff_cache/
+
+# ===========================
+# Build
+# ===========================
+build/
+dist/
+*.egg-info/
+
+# ===========================
+# Logs
+# ===========================
+*.log
+
+# ===========================
+# Local Database
+# ===========================
+*.db
+*.sqlite
+*.sqlite3
+
+# ===========================
+# Jupyter
+# ===========================
+.ipynb_checkpoints/
+
+# ===========================
+# Ollama Models (if stored locally)
+# ===========================
+models/

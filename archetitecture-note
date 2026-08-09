@@ -1,0 +1,589 @@
+# Designing a Scalable Architecture for LifeOS
+
+## Executive summary
+
+The strongest architectural fit for **LifeOS** is not a single named pattern. It is a **hybrid**: use **DDD for domain boundaries**, **Clean/Hexagonal Architecture for code structure and replaceability**, a **modular monolith for the MVP**, **LangGraph for workflow orchestration**, **PostgreSQL plus pgvector for transactional and semantic memory**, and an **event backbone introduced gradually through an outbox pattern first and an external event bus later**. This combination best matches your stated goals: many domains, many agents, maintainability, tool integration, RAG, and a future path toward digital twin or physical AI without forcing distributed-systems complexity too early. That recommendation follows from Martin Fowler’s and Eric Evans’ DDD emphasis on bounded contexts, Uncle Bob’s inward dependency rule, Cockburn’s ports-and-adapters model, Fowler’s “monolith first” guidance, LangGraph’s support for durable execution and persistence, Microsoft’s warning to use the lowest multi-agent complexity that works, and pgvector guidance that emphasizes index and partition tradeoffs as scale grows. citeturn9view1turn9view2turn10view0turn12view0turn12view1turn9view9turn9view10turn9view13turn9view12
+
+For **MVP**, I recommend a **single deployable backend** with **strict domain modules** such as Identity, Planning, Career, Knowledge, and Memory. Each domain should own its language, entities, application services, adapters, and tests. The orchestrator should be a separate application module, not the center of your business logic. Agents should live **inside domains** or in the orchestration layer as **subgraphs**, not as the primary top-level decomposition of the system. That aligns with DDD’s bounded contexts, LangGraph’s subgraph model, and Microsoft’s orchestration guidance that different stages can use different multi-agent patterns. citeturn9view1turn5search5turn9view13
+
+For the **long term**, LifeOS should evolve into a **domain-platform architecture**: domain modules first, then selective extraction into services only where deployment independence, scaling differences, or organizational boundaries justify it. Introduce an event bus when in-process domain events become a bottleneck or when external consumers need asynchronous integration. Reserve **CQRS**, **event sourcing**, **actor-model runtimes**, and **knowledge-graph-first retrieval** for the places where they solve a real problem, not as system-wide dogma. Fowler explicitly warns that microservices, CQRS, and distributed patterns bring real complexity premiums, while Microsoft’s architecture guidance emphasizes idempotency, eventual consistency, and compensation when you move into distributed event-driven designs. citeturn12view1turn9view5turn10view10turn10view9turn6search5
+
+The practical rule for LifeOS is simple: **start with domain boundaries, not service boundaries; use orchestration intentionally, not everywhere; keep memory as a platform capability rather than agent-local glue; and make every integration pluggable.** That gives you strong maintainability now and a credible path to more domains, more agents, more tools, and eventually physical-world state and action loops. citeturn9view1turn9view2turn10view0turn9view14turn10view8
+
+## Comparing the architecture options
+
+The most important thing to clarify is that these options do **not** all compete at the same layer. **DDD** tells you how to model the business domain and boundaries. **Clean** and **Hexagonal** tell you how to structure code dependencies and integrations. **Layered/N-tier**, **modular monolith**, and **microservices** are deployment and packaging styles. **Event-driven**, **CQRS**, **event sourcing**, and the **actor model** are coordination and state-management styles. **Knowledge-graph-first** and **tool/plugin registry** are data and integration strategies. For LifeOS, the right answer is therefore combinatorial, not exclusive. citeturn9view1turn9view2turn10view0turn9view3turn9view4turn9view5turn9view7turn9view8turn12view5turn10view2
+
+| Architecture | Core principle | Fit for LifeOS | Main upside | Main downside | Best use in LifeOS |
+|---|---|---|---|---|---|
+| **DDD** | Model the business in entities, value objects, aggregates, and bounded contexts. citeturn9view0turn9view1 | **Excellent** | Handles large, messy domains and keeps change bounded. citeturn9view1turn6search14 | Can become over-modeling if the system is still mostly CRUD. | Primary design method for domains such as Planning, Career, Knowledge, Finance. |
+| **Clean Architecture** | Dependencies point inward toward policies/use cases. citeturn9view2turn4search6 | **Excellent** | Swap databases, LLMs, and frameworks with less rewrite. | More interfaces and ceremony up front. | Code structure inside each domain and platform module. |
+| **Hexagonal** | Inside/outside asymmetry through ports and adapters. citeturn10view0 | **Excellent** | Great for tools, RAG backends, model providers, email/calendar connectors. | Easy to do superficially without actually enforcing boundaries. | Adapter layer for DB, vector search, LLM, files, event bus, MCP tools. |
+| **Layered / N-tier** | Split presentation, business logic, and data access into layers. citeturn9view3turn3search6 | **Good for simple systems; limited for LifeOS at scale** | Easy to explain and start with. | Horizontal layering often leaks and hurts agility as domains grow. citeturn3search18 | Fine for frontend/backend/API separation, not enough as the core architecture alone. |
+| **Modular monolith** | One deployable unit with strict internal module boundaries. citeturn12view0turn12view1turn12view4 | **Best MVP choice** | Lower ops cost, simpler debugging, faster local development. | Requires discipline to avoid turning into a big ball of mud. | Initial backend architecture. |
+| **Microservices** | Independently deployable services around business capabilities. citeturn9view4turn1search7 | **Later, selective** | Independent scaling and team autonomy. | Distributed-system complexity, eventual consistency, deployment overhead. citeturn12view1turn10view10 | Extract only high-change or high-load domains later. |
+| **Event-driven architecture** | Publish/subscribe or event streams decouple producers and consumers. citeturn9view6 | **Very good, but gradual** | Decoupling, async reactions, future digital-twin readiness. | Idempotency, ordering, operability, debugging complexity. citeturn10view9turn6search5 | Domain events, ingestion pipeline, notifications, long-running workflows. |
+| **CQRS** | Separate write and read models. citeturn9view5 | **Targeted fit** | Optimizes planner dashboards, retrieval views, analytics, personalization. | Added synchronization complexity and eventual consistency. citeturn9view5 | Use only for read-heavy or UI-projection-heavy slices. |
+| **Event Sourcing** | Persist changes as an append-only event log. citeturn9view7turn1search4 | **Selective, advanced** | Full audit trail, time travel, replay, digital twin affinity. | Harder read models, harder debugging, idempotency demands. citeturn6search5 | Use for high-value timelines or device/twin histories, not everything. |
+| **Actor model** | Stateful actors communicate via messages and isolate concurrency. citeturn9view8turn3search15 | **Better for future physical AI than MVP CRUD** | Good concurrency and isolation for many autonomous entities. | New runtime model, harder debugging and team familiarity. | Device/session/twin controllers later; possibly task executors. |
+| **Workflow / orchestration** | A coordinator explicitly models process state and step ordering. citeturn9view9turn5search13turn10view10 | **Excellent** | Best for multi-step plans, HITL approval, retries, and agent collaboration. | Can become central bottleneck if it starts owning too much business logic. | LangGraph orchestrator and domain subgraphs. |
+| **Knowledge-graph-first** | Retrieval uses entities and relationships, often combined with vector search. citeturn12view5turn12view6 | **Promising, but not MVP baseline** | Better multi-hop retrieval and explainability. | Extra ingestion/modeling cost and graph-ops complexity. | Add as a projection for decisions, relationships, or digital twin state. |
+| **Plugin / tool registry** | Standardize external capabilities behind schemas and contracts. citeturn10view2turn10view1turn10view4 | **Essential** | Decouples agent capabilities from specific vendors and APIs. | Registry governance, auth, and tool ergonomics matter a lot. citeturn11search3 | Tool access layer with MCP/OpenAPI/plugin metadata. |
+
+The comparison points to a clear conclusion: **DDD + Clean/Hexagonal + Modular Monolith + Workflow Orchestration** is the best foundation, while **event-driven messaging**, **CQRS**, **graph retrieval**, and **microservices** should be introduced only where the scale or use case truly demands them. That recommendation also matches current agent guidance from Anthropic and Microsoft: start at the lowest viable complexity, measure performance, and add complexity only when it demonstrably helps. citeturn11search0turn9view13
+
+## Why DDD helps LifeOS and where it falls short
+
+DDD is a strong fit for LifeOS because your hardest problem is not HTTP routing, database access, or model APIs. Your hardest problem is **conceptual sprawl**: User, Goal, Project, Task, Habit, Document, Knowledge Note, Memory, Decision, Skill, Application, Company, Contact, Finance Account, Investment, Health Record, Journal Entry, and the relationships among them. Fowler’s summary of DDD emphasizes exactly the pieces you need here: entities, value objects, aggregates, and especially **strategic design** through bounded contexts for large domains. citeturn9view0turn9view1
+
+That makes DDD better than a plain layered architecture for LifeOS. Layered architecture does help with encapsulation and can reduce change impact across presentation, business logic, and data-access layers, but it does not, by itself, tell you where **Career** ends and **Planning** begins, or how **Memory** differs from **Knowledge**, or which model owns a **Decision** versus a **Task**. In a system like LifeOS, those semantic boundaries are the architectural risk. citeturn9view3turn3search18turn9view1
+
+DDD is also different from Clean and Hexagonal, not a replacement for them. DDD answers **what the domain means** and **where boundaries should be**. Clean Architecture answers **which direction dependencies should flow**, and Hexagonal answers **how external things connect to the core through ports and adapters**. LifeOS needs all three: DDD to decide that Career and Finance are distinct bounded contexts, Clean to keep those domains independent of FastAPI or a specific LLM SDK, and Hexagonal to let those domains talk to PostgreSQL, pgvector, Gmail, calendars, and MCP tools through replaceable adapters. citeturn9view1turn9view2turn10view0turn9view14
+
+DDD is weaker when the domain is still vague, when the team is inexperienced, or when the problem is mostly simple CRUD. Over-applying DDD early can produce too many abstractions, too much ceremony, and more modeling than the product has earned. Fowler’s own discussion of DDD stresses its value for **large models and teams**, which implies that the payoff grows with complexity; that also means the overhead is not always justified for simple slices. This is one reason LifeOS should start with **a few real bounded contexts**, not twenty speculative ones. citeturn9view1turn6search6
+
+Compared with microservices, DDD helps more with **thinking correctly** than with **deploying independently**. In fact, microservices work best when boundaries are already good; Fowler explicitly ties microservices to bounded contexts and repeatedly warns against premature service decomposition. For LifeOS, that means DDD should come **before** microservices. It is the map you use if you ever decide to split the system. citeturn6search20turn12view0turn12view1
+
+Compared with knowledge-graph-first architectures, DDD has a simpler operational footprint and much lower ingestion overhead. But a knowledge graph can become an excellent **projection** of your DDD model later, especially for multi-hop questions, explainable recommendations, and digital-twin-like relationships. In other words, DDD should define the concepts; graph retrieval may later become one of the ways those concepts are exposed for reasoning. citeturn12view5turn12view6turn9view15
+
+The most important downside of DDD for LifeOS is therefore not that it is “bad,” but that it can be **misused as architecture theater**. If you use DDD, use it for a small number of high-value decisions: the ubiquitous language, bounded contexts, ownership rules, aggregate roots, and domain events. Do **not** use it as an excuse to create dozens of classes before the product has a working workflow. citeturn9view1turn11search0
+
+## Recommended hybrid architecture
+
+The architecture I recommend for LifeOS is a **domain-oriented modular monolith** with **Clean/Hexagonal internals**, a **LangGraph orchestration layer**, and a **shared memory platform** that separates short-term run state, long-term facts, files, and semantic retrieval. The orchestrator coordinates work, but **domains own the meaning** of the data. Event-driven behavior exists from the start, but initially as **in-process domain events plus an outbox table**, not as a full microservices mesh. This is the best compromise between current maintainability and future scalability. citeturn9view1turn9view2turn10view0turn12view0turn10view9turn9view9turn9view10
+
+A useful mental model is:
+
+- **DDD** decides the boundaries.
+- **Clean/Hexagonal** decides how the code is shaped.
+- **LangGraph** decides how complex workflows run.
+- **Postgres/pgvector** stores durable state and semantic memory.
+- **Events** connect reactions without tangling modules.
+- **A registry** manages tools and agents as contracts, not hard-coded special cases. citeturn9view1turn9view2turn10view0turn9view9turn9view10turn10view2
+
+The recommended high-level shape looks like this:
+
+```mermaid
+flowchart TB
+    UI[React or Next.js App]
+    API[FastAPI API Layer]
+    ORCH[LangGraph Orchestrator]
+    REG[Agent and Tool Registry]
+
+    subgraph DOMAINS[Domain Modules]
+        ID[Identity and Profile]
+        PLAN[Planning]
+        CAREER[Career]
+        KNOW[Knowledge and Documents]
+        MEM[Memory]
+        FIN[Finance]
+    end
+
+    subgraph DATA[Data and Platform]
+        PG[(PostgreSQL)]
+        VEC[(pgvector)]
+        FILES[(S3 or Local Blob Store)]
+        OUTBOX[(Outbox and Domain Events)]
+        OBS[Tracing and Evals]
+    end
+
+    subgraph ADAPTERS[Adapters]
+        LLM[LLM Providers]
+        TOOLS[External Tools and MCP]
+        BUS[Event Bus Later]
+    end
+
+    UI --> API
+    API --> ORCH
+    API --> DOMAINS
+    ORCH --> REG
+    ORCH --> DOMAINS
+    DOMAINS --> PG
+    DOMAINS --> VEC
+    DOMAINS --> FILES
+    DOMAINS --> OUTBOX
+    REG --> TOOLS
+    REG --> LLM
+    OUTBOX -.later.-> BUS
+    API --> OBS
+    ORCH --> OBS
+    DOMAINS --> OBS
+```
+
+This structure is intentionally **domain-first, not agent-first**. Microsoft’s orchestration guidance says multi-agent systems should use the least complexity that works and can combine patterns in different workflow stages; Anthropic similarly recommends starting simple and adding complexity only when performance improves. That makes a single orchestrator plus domain-specific subgraphs far more sensible than beginning with a crowd of always-on agents. citeturn9view13turn11search0turn12view7
+
+### Domain boundaries
+
+A good first cut for LifeOS is to define these bounded contexts:
+
+| Domain | Owns | Does not own |
+|---|---|---|
+| **Identity and Profile** | user profile, preferences, auth-linked metadata, privacy settings | goals, tasks, documents |
+| **Planning** | goals, projects, tasks, habits, schedules, plan generation, prioritization | resumes, applications, document chunks |
+| **Career** | skills, applications, companies, role targets, resumes, interview artifacts | general task scheduling |
+| **Knowledge and Documents** | files, document parsing, chunking, embeddings, source provenance | business decisions on what a goal means |
+| **Memory** | long-term facts, episodic memories, semantic summaries, memory policies | domain-specific business rules |
+| **Finance** | accounts, budgets, targets, transactions, finance-specific tools | generic document ingestion |
+
+This domain split follows DDD’s bounded-context logic and contains blast radius: changes to Career should not force Planning or Finance changes unless the contract between them changes. Fowler’s bounded-context framing and Thoughtworks’ discussion of strict domain boundaries both point in this direction. citeturn9view1turn12view4
+
+### Agent placement
+
+Agents should not be the top-level ownership unit. They should appear in two places:
+
+1. **Orchestrator agents**, which route, decompose, coordinate, and synthesize.
+2. **Domain agents or subgraphs**, which operate using domain-specific tools, schemas, and memory access. citeturn9view13turn5search5turn10view3
+
+So the system should look more like:
+
+- `LifeOS Orchestrator`
+- `Planning Subgraph`
+- `Career Subgraph`
+- `Research / Retrieval Subgraph`
+- optional evaluators, reviewers, or HITL checkpoints
+
+rather than “fifteen top-level agents talking to each other all the time.” LangGraph’s subgraph model and persistence support this approach directly, while Microsoft’s orchestration patterns provide the vocabulary for when to use sequential, concurrent, handoff, or group-chat-like collaboration. citeturn5search5turn9view9turn9view10turn9view13
+
+### Memory and RAG placement
+
+Memory should be a **platform capability**, not hidden inside prompts. LifeOS needs at least four distinct memory/storage modes:
+
+| Memory layer | Purpose | Recommended implementation |
+|---|---|---|
+| **Run state** | current thread state, pending approvals, checkpointing | LangGraph checkpointers |
+| **Long-term user memory** | preferences, stable facts, durable summaries | LangGraph stores or domain memory tables in Postgres |
+| **Transactional domain state** | goals, tasks, applications, accounts | PostgreSQL relational tables |
+| **Semantic knowledge** | chunks, embeddings, searchable notes, retrieved passages | pgvector-backed tables plus metadata |
+
+LangGraph explicitly distinguishes short-term thread memory from cross-thread long-term stores, which maps cleanly to LifeOS’s run state versus user memory. pgvector supports exact and approximate similarity search, with HNSW and IVFFlat tradeoffs, while Microsoft’s PostgreSQL guidance emphasizes tuning partitioning and indexing as data grows. citeturn9view10turn9view11turn9view12
+
+For LifeOS, I recommend **Postgres-first RAG** for the MVP. Store documents in object storage, put metadata and chunk rows in Postgres, embed into pgvector, and retrieve with domain filters before model generation. Reserve **GraphRAG** for later, when you have enough linked entities and enough multi-hop questions to justify the graph ingestion and maintenance cost. Neo4j’s GraphRAG material makes clear that graph retrieval is most valuable when you need richer relational context and explainability than vector-only retrieval can provide. citeturn12view5turn12view6
+
+### Event bus and workflow strategy
+
+Start with **domain events inside the modular monolith**, plus a **transactional outbox**. That gives you clean internal decoupling now and a migration path later if you add EventBridge, Kafka, SNS/SQS, or another broker. Microsoft’s outbox guidance and event-sourcing/idempotency notes are directly relevant here: once you publish events across boundaries, you must design for retries, duplicates, and eventual consistency. citeturn10view9turn6search5turn6search16
+
+The right initial event flow should be **orchestration-first for complex business workflows** and **event-driven for side effects**. For example, a plan review with user approval belongs in LangGraph. A “document embedded” or “task due soon” notification belongs on an event channel. That mirrors Microsoft’s comparison of choreography and orchestration: choreography reduces coupling for simpler reactions, while orchestration is better for complex coordinated flows. citeturn10view10
+
+## Concrete design artifacts
+
+### Domain-to-service mapping
+
+For the MVP, keep these as **modules** inside one backend deployable. Treat the table below as your future extraction map if you ever move to services. The mapping is intentionally domain-led, because bounded contexts are the cleanest starting point for later decomposition. citeturn9view1turn12view0turn12view2
+
+| Domain module now | Future service candidate | Core responsibilities | Primary storage | Typical agent or workflow |
+|---|---|---|---|---|
+| `identity` | Identity Service | user profile, preferences, auth, policy flags | Postgres | profile-aware context builder |
+| `planning` | Planning Service | goals, projects, tasks, habits, prioritization | Postgres | planner subgraph |
+| `career` | Career Service | skills, roles, companies, applications, resume tailoring | Postgres + pgvector | career advisor subgraph |
+| `knowledge` | Document Service | file ingest, parsing, chunking, provenance, embeddings | S3 + Postgres + pgvector | ingestion and retrieval flows |
+| `memory` | Memory Service | episodic memory, semantic fact store, user summaries | Postgres + LangGraph stores | memory recall/update flows |
+| `orchestrator` | Workflow Service | request routing, graph execution, approvals, result synthesis | LangGraph state + Postgres refs | master orchestrator |
+| `tooling` | Integration Service | calendar, email, github, web, MCP, plugin registry | registry tables + secrets store | tool broker |
+| `evaluation` | Evals/Observability Service | traces, scoring, regressions, safety checks | LangSmith + OTel + warehouse | automated and manual eval runs |
+
+This mapping preserves the core rule: **service extraction should follow domain friction**, not anticipation. Fowler’s microservices guidance and monolith-first advice both support incremental decomposition rather than speculative service sprawl. citeturn9view4turn12view0turn12view1
+
+### Suggested database schema outline
+
+A practical schema is **Postgres with separate logical schemas** per domain plus a small platform schema. That keeps the deployment simple while still making ownership visible.
+
+```sql
+-- platform
+platform.users
+platform.user_preferences
+platform.files
+platform.outbox_events
+platform.idempotency_keys
+platform.audit_log
+
+-- planning
+planning.goals
+planning.projects
+planning.tasks
+planning.habits
+planning.plan_runs
+planning.plan_items
+
+-- career
+career.skills
+career.companies
+career.applications
+career.resume_versions
+career.job_postings
+career.interviews
+
+-- knowledge
+knowledge.documents
+knowledge.document_versions
+knowledge.chunks
+knowledge.embeddings
+knowledge.sources
+knowledge.ingestion_runs
+
+-- memory
+memory.episodes
+memory.facts
+memory.summaries
+memory.memory_links
+memory.recall_feedback
+
+-- evaluation
+evaluation.runs
+evaluation.metrics
+evaluation.judgments
+evaluation.retrieval_sets
+evaluation.tool_calls
+```
+
+This outline is consistent with DDD’s bounded contexts and with a Postgres-first RAG design. It also leaves room for **CQRS projections** later, such as `planning_dashboard_view` or `career_candidate_fit_view`, without forcing CQRS on the write model from day one. citeturn9view1turn9view5turn9view11turn9view12
+
+For vector storage, use rows that carry both embeddings and rich metadata. pgvector’s official docs and optimization guidance make it clear that retrieval quality and performance depend heavily on index choice, filtering patterns, and partitioning. So do not treat “one big embeddings table” as a permanent design. Use fields like `tenant_id`, `domain`, `document_id`, `chunk_type`, `created_at`, `visibility`, and `embedding_model` from the start. citeturn9view11turn9view12
+
+### Suggested backend and frontend module structure
+
+FastAPI’s own docs recommend splitting larger applications across multiple files and routers, and Next.js now documents explicit project-structure conventions for App Router projects. The structure below aligns those framework conventions with domain modularity. citeturn10view5turn10view6
+
+```text
+lifeos/
+  apps/
+    api/
+      app.py
+      routers/
+        planning.py
+        career.py
+        memory.py
+        documents.py
+        agents.py
+        events.py
+      dependencies/
+      middleware/
+    web/
+      app/
+        dashboard/
+        goals/
+        projects/
+        career/
+        memory/
+        settings/
+      components/
+      lib/
+      hooks/
+
+  src/
+    platform/
+      config/
+      db/
+      events/
+      llm/
+      observability/
+      auth/
+      files/
+      tool_registry/
+      shared_kernel/
+
+    domains/
+      planning/
+        domain/
+        application/
+        adapters/
+        api/
+        tests/
+      career/
+        domain/
+        application/
+        adapters/
+        api/
+        tests/
+      knowledge/
+        domain/
+        application/
+        adapters/
+        api/
+        tests/
+      memory/
+        domain/
+        application/
+        adapters/
+        api/
+        tests/
+      identity/
+        domain/
+        application/
+        adapters/
+        api/
+        tests/
+
+    orchestration/
+      graphs/
+      subgraphs/
+      policies/
+      approvals/
+      runners/
+      evaluators/
+
+  infra/
+    docker/
+    terraform/
+    migrations/
+    ci/
+    scripts/
+
+  docs/
+    adr/
+    diagrams/
+    contracts/
+    runbooks/
+```
+
+The `shared_kernel` should stay small. If too much code migrates there, you are effectively rebuilding a hidden monolith core that every domain depends on. DDD uses bounded contexts precisely to avoid that kind of accidental centralization. citeturn9view1turn12view4
+
+### API surface sketch
+
+Your API surface should separate **business APIs**, **workflow APIs**, and **platform APIs**. FastAPI naturally supports grouped routers, so this split helps keep the frontend simple while preserving domain ownership in backend code. citeturn8search6turn10view5
+
+A strong initial API sketch is:
+
+```text
+GET    /api/v1/goals
+POST   /api/v1/goals
+GET    /api/v1/projects
+POST   /api/v1/tasks
+PATCH  /api/v1/tasks/{task_id}
+
+GET    /api/v1/career/applications
+POST   /api/v1/career/applications
+POST   /api/v1/career/resume-versions
+
+POST   /api/v1/documents/upload
+POST   /api/v1/documents/{id}/ingest
+GET    /api/v1/search?q=...
+POST   /api/v1/retrieval/query
+
+GET    /api/v1/memory/facts
+POST   /api/v1/memory/facts
+POST   /api/v1/memory/episodes
+
+POST   /api/v1/agents/run
+GET    /api/v1/workflows/{workflow_id}
+POST   /api/v1/workflows/{workflow_id}/resume
+POST   /api/v1/approvals/{approval_id}
+
+GET    /api/v1/events
+GET    /api/v1/evals/runs
+POST   /api/v1/evals/replay/{run_id}
+```
+
+The important principle is that `/agents/run` and `/workflows/*` are **process endpoints**, while `/goals`, `/tasks`, `/applications`, and `/memory/*` are **state endpoints**. That distinction becomes more valuable as you add orchestration, retries, approvals, and eval replays. LangGraph’s persistence and interrupts make this workflow/state split especially natural. citeturn9view10turn5search13
+
+### Agent registry specification
+
+A registry is worth adding early because tool and agent sprawl is one of the easiest ways agent systems become unmaintainable. MCP, Semantic Kernel plugins, and plugin-based function calling all point toward the same architectural lesson: **capabilities should be described with metadata and schemas, not hard-coded branching logic**. citeturn9view14turn10view1turn10view2turn10view4
+
+A good registry record should look like this:
+
+```yaml
+agent_id: career_advisor
+version: 1.0.0
+domain: career
+kind: subgraph
+description: Advises on applications, positioning, and resume tailoring.
+entrypoint: orchestration.subgraphs.career:graph
+input_schema_ref: schemas/career_advisor_input.json
+output_schema_ref: schemas/career_advisor_output.json
+required_tools:
+  - jobs.search
+  - docs.retrieve
+  - profile.read
+optional_tools:
+  - email.draft
+required_memories:
+  - user_profile
+  - career_facts
+retrieval_policy:
+  domains: [career, knowledge, memory]
+  top_k: 12
+  rerank: true
+approval_policy:
+  mode: human_required_for_external_send
+limits:
+  max_steps: 12
+  timeout_seconds: 90
+observability:
+  trace_tags:
+    - domain:career
+    - agent:career_advisor
+safety:
+  allowed_actions:
+    - read
+    - analyze
+    - draft
+```
+
+This registry should exist for **tools** as well. Anthropic’s guidance on tool design emphasizes namespacing, ergonomic tool specifications, meaningful context in responses, and evaluation of tool quality. That is exactly why a registry should be treated as a product surface, not a config afterthought. citeturn11search3
+
+### Event schema examples
+
+Even before you introduce a full event bus, you should standardize an event envelope. Azure’s event-driven guidance and digital-twin routing docs both underline the importance of explicit event structures and routes. citeturn9view6turn9view16turn9view17
+
+A useful internal event envelope:
+
+```json
+{
+  "event_id": "evt_01J...",
+  "event_type": "planning.task.created",
+  "event_version": "1.0",
+  "occurred_at": "2026-07-07T16:20:00Z",
+  "source": "planning",
+  "actor_id": "user_123",
+  "correlation_id": "req_456",
+  "causation_id": "cmd_789",
+  "tenant_id": "user_123",
+  "payload": {
+    "task_id": "task_001",
+    "project_id": "proj_002",
+    "title": "Finish LangGraph tutorial",
+    "priority": "high"
+  }
+}
+```
+
+Examples you will likely need early:
+
+```json
+{
+  "event_type": "knowledge.document.ingested",
+  "payload": {
+    "document_id": "doc_123",
+    "domain": "career",
+    "chunk_count": 42,
+    "embedding_model": "text-embedding-3-large"
+  }
+}
+```
+
+```json
+{
+  "event_type": "memory.fact.upserted",
+  "payload": {
+    "fact_id": "fact_567",
+    "subject": "user_123",
+    "predicate": "career_goal",
+    "object": "AI Engineer",
+    "confidence": 0.92
+  }
+}
+```
+
+```json
+{
+  "event_type": "workflow.approval.required",
+  "payload": {
+    "workflow_id": "wf_abc",
+    "step": "send_email",
+    "agent_id": "career_advisor",
+    "reason": "external_action"
+  }
+}
+```
+
+And for the future digital-twin path:
+
+```json
+{
+  "event_type": "twin.sensor.signal.received",
+  "payload": {
+    "twin_id": "twin_home_01",
+    "sensor_type": "temperature",
+    "value": 72.4,
+    "unit": "F",
+    "location": "office"
+  }
+}
+```
+
+### Example event flow
+
+The flow below shows how to keep orchestration explicit while using events for decoupled reactions:
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant API as FastAPI
+    participant O as LangGraph Orchestrator
+    participant K as Knowledge Module
+    participant M as Memory Module
+    participant P as Planning Module
+    participant X as Outbox/Event Bus
+
+    U->>API: Upload resume
+    API->>K: Create document and ingest request
+    K->>K: Parse, chunk, embed, store
+    K->>X: Emit knowledge.document.ingested
+    X-->>M: Update memory links
+    X-->>P: Refresh planning context
+    U->>API: Ask "What should I do next for internships?"
+    API->>O: Start workflow
+    O->>M: Recall facts and summaries
+    O->>K: Retrieve relevant chunks
+    O->>P: Generate prioritized actions
+    P-->>O: Structured plan
+    O-->>API: Final response with trace IDs
+```
+
+This hybrid of explicit orchestration and evented side effects is preferable to “everything is chat between agents.” It keeps the business workflow debuggable while still allowing domains to react asynchronously. That mirrors Microsoft’s orchestration-versus-choreography tradeoffs and LangGraph’s strength in durable stateful workflows. citeturn10view10turn9view9turn9view10
+
+## Migration path and operational guidance
+
+### MVP to scale roadmap
+
+The safest growth path for LifeOS is:
+
+1. **MVP**: modular monolith, domain modules, Postgres plus pgvector, LangGraph orchestrator, in-process events, outbox table, file storage in S3 or local disk, tracing and basic evals. citeturn12view0turn9view9turn9view10turn9view11turn14search0turn14search1  
+2. **Scale-up phase**: externalize object storage to S3, formalize a registry for tools and agents, add event routing, add CQRS read models where dashboards and planning queries justify them, and tighten observability with OTel and LangSmith. citeturn14search8turn10view2turn9view5turn10view7turn10view8  
+3. **Selective distribution**: extract only those domains that have distinct scaling needs, data ownership needs, or integration needs; adopt a real event bus and sagas for cross-service workflows; keep the core orchestrator lean. citeturn12view1turn10view10turn14search3turn14search19  
+4. **Digital twin / physical AI phase**: add a graph projection of entities and relationships, a twin-state model, device or sensor gateways, event routing for state changes, and optionally actor-like runtimes for highly concurrent entity controllers. Azure Digital Twins and IoT documentation show why event routing and graph-based model layers become important once the system starts mirroring real-world entities and signals. citeturn9view15turn9view16turn9view17turn7search5turn9view8
+
+### Testing and evaluation strategy
+
+LifeOS should treat **evaluation as architecture**, not as a later QA activity. LangSmith’s observability material emphasizes end-to-end visibility into RAG, agent decisions, cost, latency, and failure modes, while OpenTelemetry gives you a vendor-neutral trace/metrics/log foundation. Those two together are a strong fit: LangSmith for AI-specific traces and evals, OTel for service-wide telemetry. citeturn10view8turn8search16turn10view7turn8search9
+
+The evaluation stack should include:
+
+- **unit tests** for domain logic and policies,
+- **adapter contract tests** for tools and plugin schemas,
+- **retrieval tests** for precision/recall on known document sets,
+- **workflow tests** that replay saved LangGraph runs,
+- **human-judged output evals** for usefulness and safety,
+- **cost/latency budgets** enforced in CI. citeturn9view9turn9view10turn10view8turn11search3
+
+A particularly important metric for LifeOS is not just “answer correctness,” but **boundary correctness**: did the orchestrator call the right domain, retrieve the right memory, and avoid using domains it did not need? Anthropic’s and Microsoft’s guidance both reinforce that over-complex agent systems incur unnecessary latency and cost if they do not route intentionally. citeturn11search0turn9view13
+
+### CI/CD and deployment notes
+
+For deployment on AWS, a good default is **Docker containers on ECS with Fargate**, **RDS for PostgreSQL with pgvector**, **S3 for files**, and **EventBridge later if you externalize events**. ECS and Fargate reduce cluster-management burden for containerized workloads, RDS supports pgvector, and EventBridge provides a managed event bus when you outgrow purely in-process or DB-backed events. For an architecture that is still discovering its correct domain boundaries, that is usually a better operational starting point than jumping immediately to Kubernetes. citeturn14search2turn14search10turn14search14turn14search1turn14search5turn14search8turn14search3turn14search19
+
+A practical CI/CD pipeline should do four things on every significant change:
+
+1. run dependency-boundary checks between domain modules,
+2. run migrations and schema validation,
+3. execute retrieval and workflow regression suites,
+4. build and publish versioned containers. citeturn12view4turn10view5turn14search2
+
+You should also keep **Architecture Decision Records** from the beginning. Fowler’s ADR note and Michael Nygard’s original practice both make the case that architecture is easier to evolve when the reasoning behind decisions is preserved. That matters especially in AI systems, where tool choices, retrieval strategies, and orchestration boundaries change quickly. citeturn4search2turn4search5turn4search15
+
+### Bottom-line recommendation
+
+If this were my project, I would commit to the following architecture now:
+
+- **DDD bounded contexts** for domain design.
+- **Clean + Hexagonal** inside each domain.
+- **A modular monolith** for the backend until real scaling pressure proves otherwise.
+- **LangGraph orchestration** for complex workflows and approvals.
+- **Postgres + pgvector + S3** as the primary memory and retrieval platform.
+- **An outbox-backed event model** immediately, with a managed event bus later.
+- **A plugin/tool registry** based on explicit contracts, ideally compatible with MCP or OpenAPI-style schemas.
+- **LangSmith + OpenTelemetry** for evaluations, tracing, and operational insight.
+- **Graph projection and actor-like runtimes later**, when digital twin or physical AI requirements become real. citeturn9view1turn9view2turn10view0turn12view0turn9view9turn9view10turn9view11turn14search8turn10view9turn10view2turn10view8turn10view7turn12view5turn9view8
+
+That architecture is scalable, but more importantly, it is **scalable without being prematurely distributed**. It is maintainable because boundaries are explicit. It is adaptable because dependencies point inward and integrations become adapters. And it is future-proof enough to support more domains, more agents, more tools, and eventually digital-twin or physical-world control loops without forcing you to rewrite the conceptual core of LifeOS. citeturn9view1turn9view2turn12view1turn10view0turn9view15
