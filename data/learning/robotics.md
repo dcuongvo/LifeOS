@@ -28,6 +28,12 @@
 - 4.2 Feel the Light
 - 4.3 Toggle the Joystick
 
+Learned:
+- analogRead() returns a value between 0 and 1023.
+- Potentiometers output varying voltage.
+- Photoresistors change resistance based on light.
+- ADC converts analog voltage into digital values.
+
 ## Current stage
 
 Completed the introductory Arduino digital and analog input/output projects.

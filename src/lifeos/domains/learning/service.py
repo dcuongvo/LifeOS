@@ -25,3 +25,6 @@ class LearningService:
             query=query,
             limit=limit,
         )
+
+    def close(self) -> None:
+        self.repository.close()

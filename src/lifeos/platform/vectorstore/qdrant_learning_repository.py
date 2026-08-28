@@ -1,28 +1,25 @@
-from ollama import Client
 from qdrant_client import QdrantClient, models
 
 from lifeos.domains.learning.models import LearningMemory
 from lifeos.domains.learning.repository import LearningMemoryRepository
+from lifeos.platform.embeddings.ollama import OllamaEmbeddingService
 
 
 class QdrantLearningMemoryRepository(LearningMemoryRepository):
     def __init__(
         self,
         qdrant_path: str,
-        ollama_host: str,
-        embedding_model: str,
+        embedding_service: OllamaEmbeddingService,
         collection_name: str = "learning_memories",
         vector_size: int = 2560,
     ) -> None:
         self.collection_name = collection_name
-
-        self.ollama_client = Client(host=ollama_host)
         self.qdrant_client = QdrantClient(path=qdrant_path)
-        self.embedding_model = embedding_model
+        self.embedding_service = embedding_service
         self.vector_size = vector_size
 
         self._ensure_collection()
-    # check if qdrant collection exist or not 
+
     def _ensure_collection(self) -> None:
         if self.qdrant_client.collection_exists(self.collection_name):
             return
@@ -34,14 +31,10 @@ class QdrantLearningMemoryRepository(LearningMemoryRepository):
                 distance=models.Distance.COSINE,
             ),
         )
-    #convert to embedding and upsert to qdrant collection
-    def add(self, memory: LearningMemory) -> None:
-        response = self.ollama_client.embed(
-            model=self.embedding_model,
-            input=memory.content,
-        )
 
-        embedding = response["embeddings"][0]
+    def add(self, memory: LearningMemory) -> None:
+        embeddings = self.embedding_service.embed_texts([memory.content])
+        embedding = embeddings[0]
 
         self.qdrant_client.upsert(
             collection_name=self.collection_name,
@@ -53,18 +46,13 @@ class QdrantLearningMemoryRepository(LearningMemoryRepository):
                 )
             ],
         )
-    # simple semantic search and return the result as LearningMemory list
+
     def search(
         self,
         query: str,
         limit: int = 5,
     ) -> list[LearningMemory]:
-        response = self.ollama_client.embed(
-            model=self.embedding_model,
-            input=query,
-        )
-
-        query_embedding = response["embeddings"][0]
+        query_embedding = self.embedding_service.embed_texts([query])[0]
 
         results = self.qdrant_client.query_points(
             collection_name=self.collection_name,
@@ -76,3 +64,6 @@ class QdrantLearningMemoryRepository(LearningMemoryRepository):
             LearningMemory.model_validate(result.payload)
             for result in results
         ]
+
+    def close(self) -> None:
+        self.qdrant_client.close()
