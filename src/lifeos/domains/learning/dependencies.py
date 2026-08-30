@@ -2,8 +2,8 @@ from lifeos.domains.learning.repository import (
     LearningMemoryRepository,
 )
 from lifeos.domains.learning.service import LearningService
-from lifeos.domains.learning.tools import LearningTools
-from lifeos.domains.learning.workflow import (
+from lifeos.domains.learning.agent.tools import LearningTools
+from lifeos.domains.learning.agent.workflow import (
     LearningWorkflow,
 )
 from lifeos.platform.embeddings.ollama import (

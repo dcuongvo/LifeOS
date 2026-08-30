@@ -93,3 +93,8 @@ dist/
 # Ollama Models (if stored locally)
 # ===========================
 models/
+
+
+secrets/
+token.json
+*.token.json
