@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     learning_collection: str = "learning_memories"
     embedding_vector_size: int = 2560
 
+    timezone: str = "America/Los_Angeles"
+    
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
